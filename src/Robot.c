@@ -11,19 +11,19 @@
 #define MAX_SENSOR_SIDE_R   49
 #define MAX_SENSOR_FRONT    100
 #define SEND_INTERVAL_MS    100
-#define MAX_WAIT_LIGHT_TIME 2000
+#define MAX_WAIT_LIGHT_TIME 1000
 #define SERVO_OFFSET        952
 #define SERVO_SCALE         4
 #define PWM_SCALE           8000 / 126
-#define NO_LIGHT_VALUE      180
+#define NO_LIGHT_VALUE      235
 
 // PI Control Constants
-#define KP                  20.0f
+#define KP                  40.0f
 #define KI                  0.02f
 #define KP_LIGHT            7.5f
 #define KI_LIGHT            0.01f
 #define TOO_CLOSE_FORWARD   15
-#define TOO_CLOSE_SIDE      10
+#define TOO_CLOSE_SIDE      8
 #define FOLLOW_LIGHT_MODE   2
 #define FOLLOW_PATH_MODE    1
 #define MANUAL_MODE         0
@@ -41,7 +41,7 @@ int16_t integral = 0;
 int16_t control = 0;
 int16_t lm = 0;
 int16_t rm = 0;
-int16_t mode = MANUAL_MODE;
+uint16_t mode = 0;
 uint16_t compare_value = 0;
 int counter = 0;
 int seconds = 0;
@@ -90,12 +90,12 @@ int main(void)
         
 
         // Light Frequency Section
-        if(time_low_flag && (light_average < 160)){
+        if(time_low_flag && (light_average < 200)){
             time_low = counter;
             time_low_flag = false;
             time_high_flag = true;
         }
-        if(time_high_flag && (light_average > 180)){
+        if(time_high_flag && (light_average > 220)){
             frequency = 1 * 10000 / (counter - time_low);
             counter = 0;
             time_low = 0;
@@ -108,7 +108,7 @@ int main(void)
         // Sending Section
         if ((current_ms - last_send_ms) >= SEND_INTERVAL_MS)
         {    
-            sprintf(serial_string, "\n Left Light: %u, Right Light: %u", 255-left_light, 255-right_light);
+            sprintf(serial_string, "\n Left Light: %u, Right Light: %u", left_light, right_light);
             serial0_print_string(serial_string);
 
             // Distance Sensors
@@ -136,24 +136,25 @@ int main(void)
 
         // Receiving Section
         if (serial2_available())
-        {
+        {   
             serial2_get_data(receivedData, 4);
             mode = receivedData[3];
         }
         
 
-        // if(mode == FOLLOW_LIGHT_MODE){
-        //     follow_light_drive(right_light, left_light, front_sensor);
-        //     // servo(125);
-        // }else if(mode == FOLLOW_PATH_MODE){
-        //     auto_drive(front_sensor, left_sensor, right_sensor);
-        //     // servo(125);
-        // }else if(mode == MANUAL_MODE){
-        //     motor_drive(receivedData[0], receivedData[1]);
-        //     servo(receivedData[2]);
-        // }
+        if(mode == 2){
+            follow_light_drive(right_light, left_light, front_sensor);
+            servo(125);
+        }else if(mode == 1){
+            auto_drive(front_sensor, left_sensor, right_sensor);
+            servo(125);
+        }else if(mode == 0){
+            motor_drive(receivedData[0], receivedData[1]);
+            servo(receivedData[2]);
+        }
+        
 
-        auto_drive(front_sensor, left_sensor, right_sensor);
+        // auto_drive(front_sensor, left_sensor, right_sensor);
         
     }
 

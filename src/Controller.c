@@ -1,17 +1,13 @@
-// *****************
-// Example ATmega2560 Project
-// File: ATmega2560Project.c
-// An example file for second year mechatronics project
-// *****************
-
 #include "Controller.h"  // Include this .c file's header
 
-// Constants
 #define ADC_MAX_VALUE     253
 #define SEND_INTERVAL_MS  100
+#define INT_INTERVAL_MS  1000
 
 uint8_t mode = 0;
 int current_ms = 0;
+
+char serial_string[120] = {0};
 
 int main(void)
 {
@@ -23,24 +19,26 @@ int main(void)
   lcd_init();
   _delay_ms(20);
 
-  // Interrupt setup 
-  DDRD &= ~(1 << PD1);  // INT1 (PD1)
-  DDRE &= ~(1 << PE4);  // INT2 (PE4)
+  // INT0 (PD0) and INT1 (PD1) input + pull-up
+  DDRD &= ~((1 << PD0) | (1 << PD1));     // Set as input
+  PORTD |= (1 << PD0) | (1 << PD1);       // Enable pull-up resistors
 
-  // INT1 -> Rising edge
-  EICRA |= (1 << ISC11) | (1 << ISC10); // ISC11:10 = 11 = RISING EDGE
-  // INT2 -> Falling edge
-  EICRA |= (1 << ISC21);
-  EICRA &= ~(1 << ISC20);               // ISC21:20 = 10 = FALLING EDGE
+  // Configure interrupts
+  // INT0 -> Falling edge: ISC01 = 1, ISC00 = 0
+  EICRA |= (1 << ISC01);
+  EICRA &= ~(1 << ISC00);
 
-  EIMSK |= (1 << INT1) | (1 << INT2);
+  // INT1 -> Falling edge: ISC11 = 1, ISC10 = 0
+  EICRA |= (1 << ISC11);
+  EICRA &= ~(1 << ISC10);
 
-  sei();
+  // Enable INT0 and INT1
+  EIMSK |= (1 << INT0) | (1 << INT1);
 
-  uint8_t vertical1 = 0;
-  uint8_t vertical2 = 0;
-  uint8_t horizontal1 = 0;
-  uint8_t horizontal2 = 0;
+  sei();  // Enable global interrupts
+
+  uint8_t vertical1 = 0, vertical2 = 0;
+  uint8_t horizontal1 = 0, horizontal2 = 0;
   uint8_t receivedDataRange[4]; // Received data array
   int last_send_ms = 0;
   char received_string[100] = {};
@@ -49,49 +47,38 @@ int main(void)
   {
     current_ms = milliseconds_now();
 
-    // Sending section
+    // Sending joystick data every interval
     if ((current_ms - last_send_ms) >= SEND_INTERVAL_MS)
     {
-      // Joystick 1
       vertical1   = (adc_read(15) >> 2);
       horizontal1 = (adc_read(14) >> 2);
-
-      if (vertical1 > ADC_MAX_VALUE) {
-        vertical1 = ADC_MAX_VALUE;
-      }
-      if (horizontal1 > ADC_MAX_VALUE) {
-        horizontal1 = ADC_MAX_VALUE;
-      }
-
-      // Joystick 2
       vertical2   = (adc_read(0) >> 2);
       horizontal2 = (adc_read(1) >> 2);
 
-      if (vertical2 > ADC_MAX_VALUE) {
-        vertical2 = ADC_MAX_VALUE;
-      }
-      if (horizontal2 > ADC_MAX_VALUE) {
-        horizontal2 = ADC_MAX_VALUE;
-      }
+      // Clamp values
+      if (vertical1 > ADC_MAX_VALUE) vertical1 = ADC_MAX_VALUE;
+      if (horizontal1 > ADC_MAX_VALUE) horizontal1 = ADC_MAX_VALUE;
+      if (vertical2 > ADC_MAX_VALUE) vertical2 = ADC_MAX_VALUE;
+      if (horizontal2 > ADC_MAX_VALUE) horizontal2 = ADC_MAX_VALUE;
 
-      // Function takes number of bytes followed by data bytes
       serial2_write_bytes(4, vertical1, horizontal1, vertical2, mode);
       last_send_ms = current_ms;
+
+      sprintf(serial_string, "\n Mode: %i", mode);
+    serial0_print_string(serial_string);
     }
 
-    // Receiving section: battery levels, range sensor readings in cm,
-    // autonomous/manual, light level/frequency, low battery voltage alert
+    // Receiving data to display on LCD
     if (serial2_available())
     {
-      serial2_get_data(receivedDataRange, 4); // Fill array with 4 bytes
+      serial2_get_data(receivedDataRange, 4);
       lcd_clrscr();
-
-      lcd_home();  // Same as lcd_goto(0)
+      lcd_home();
       sprintf(received_string, "L:%ucm R:%ucm", receivedDataRange[0], receivedDataRange[1]);
-      lcd_puts(received_string);  // First line
+      lcd_puts(received_string);
 
-      lcd_goto(0x40);  // Cursor to second line
-      sprintf(received_string, "F:%ucm L: %u.%uHz", receivedDataRange[2], receivedDataRange[3]/10, receivedDataRange[3]%10);
+      lcd_goto(0x40);
+      sprintf(received_string, "F:%ucm L:%u.%uHz", receivedDataRange[2], receivedDataRange[3]/10, receivedDataRange[3]%10);
       lcd_puts(received_string);
     }
   }
@@ -99,29 +86,32 @@ int main(void)
   return 1;
 }
 
-// Interrupt for button 1, Auto mode
-ISR(INT1_vect) {
-  int last_int_ms = 0;
-  if ((last_int_ms - current_ms) > SEND_INTERVAL_MS){
-    if(mode == 1){
-      mode = 0;
-    }else{
-      mode = 1;
+int last_int_ms = 0;
+
+// INT0: Button 1 -> Auto Mode Toggle
+ISR(INT0_vect)
+{
+  current_ms = milliseconds_now();
+  if ((current_ms-last_int_ms) > INT_INTERVAL_MS){
+      if(mode == 1){
+        mode = 0;
+      }else{
+        mode = 1;
+      }
+      last_int_ms = current_ms;
     }
-    last_int_ms = current_ms;
-  }
 }
 
-// Interrupt for button 2, Light mode
-ISR(INT2_vect) {
-  int last_int_ms = 0;
-  if ((last_int_ms - current_ms) > SEND_INTERVAL_MS){
-    if(mode == 2){
-      mode = 0;
-    }else{
-      mode = 2;
+// INT1: Button 2 -> Light Mode Toggle
+ISR(INT1_vect)
+{
+  current_ms = milliseconds_now();
+  if ((current_ms-last_int_ms) > INT_INTERVAL_MS){
+      if(mode == 2){
+        mode = 0;
+      }else{
+        mode = 2;
+      }
+      last_int_ms = current_ms;
     }
-    last_int_ms = current_ms;
-  }
 }
-
